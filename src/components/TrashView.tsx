@@ -11,6 +11,7 @@ export function TrashView() {
   const restoreTrash = useFontStore((s) => s.restoreTrash);
   const deleteTrashEntry = useFontStore((s) => s.deleteTrashEntry);
   const emptyTrash = useFontStore((s) => s.emptyTrash);
+  const busy = useFontStore((s) => s.bulk !== null);
 
   if (trash.length === 0) {
     return (
@@ -35,6 +36,7 @@ export function TrashView() {
         </span>
         <motion.button
           className="trash-empty-btn"
+          disabled={busy}
           onClick={() => void emptyTrash()}
           whileHover={{ y: -1 }}
           whileTap={{ scale: 0.97 }}

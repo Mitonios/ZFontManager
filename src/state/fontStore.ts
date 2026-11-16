@@ -97,6 +97,7 @@ interface FontStore {
   notes: Record<string, string>;
   covers: Record<string, string>;
   trash: TrashEntry[];
+  bulk: { op: "uninstall" | "empty-trash"; done: number; total: number } | null;
   panelWidth: number;
 
   selection: string[];
@@ -335,6 +336,7 @@ export const useFontStore = create<FontStore>((set, get) => ({
   notes: {},
   covers: {},
   trash: [],
+  bulk: null,
   panelWidth: 348,
   selection: [],
   visibleOrder: [],
@@ -409,6 +411,10 @@ export const useFontStore = create<FontStore>((set, get) => ({
     initStarted = true;
     await listen<ScanProgress>("scan:progress", (e) => {
       set({ scanProgress: e.payload });
+    });
+    await listen<{ op: string; done: number; total: number }>("bulk:progress", (e) => {
+      const cur = get().bulk;
+      if (cur) set({ bulk: { ...cur, done: e.payload.done, total: e.payload.total } });
     });
     try {
       const prefs = (await ipc.getPrefs()) ?? {};
@@ -751,19 +757,34 @@ export const useFontStore = create<FontStore>((set, get) => ({
       toast.error(t("toast.cantUninstallSystem"), t("toast.cantUninstallSystemSub"));
       return;
     }
+    if (get().bulk) return;
     const entryIds: string[] = [];
     const gonePaths = new Set<string>();
     let failure: string | null = null;
+    const items: { path: string; family: string }[] = [];
+    const seen = new Set<string>();
     for (const { family, paths } of targets) {
       for (const path of paths) {
-        if (gonePaths.has(path)) continue;
-        try {
-          entryIds.push((await ipc.uninstallFont(path, family)).id);
-          gonePaths.add(path);
-        } catch (e) {
-          failure = String(e);
+        if (seen.has(path)) continue;
+        seen.add(path);
+        items.push({ path, family });
+      }
+    }
+    set({ bulk: { op: "uninstall", done: 0, total: items.length } });
+    try {
+      const results = await ipc.uninstallFonts(items);
+      for (const r of results) {
+        if (r.entry) {
+          entryIds.push(r.entry.id);
+          gonePaths.add(r.path);
+        } else if (r.error) {
+          failure = r.error;
         }
       }
+    } catch (e) {
+      failure = String(e);
+    } finally {
+      set({ bulk: null });
     }
     if (failure) toast.error(t("toast.couldntMoveToTrash"), failure);
     if (gonePaths.size === 0) return;
@@ -851,12 +872,19 @@ export const useFontStore = create<FontStore>((set, get) => ({
   },
 
   emptyTrash: async () => {
+    if (get().bulk) return;
+    set({ bulk: { op: "empty-trash", done: 0, total: get().trash.length } });
     try {
       await ipc.emptyTrash();
       set({ trash: [] });
       toast.success(t("toast.trashEmptied"), undefined, "trash-empty");
     } catch (e) {
+      try {
+        set({ trash: await ipc.listTrash() });
+      } catch {}
       toast.error(t("toast.couldntEmptyTrash"), String(e));
+    } finally {
+      set({ bulk: null });
     }
   },
 

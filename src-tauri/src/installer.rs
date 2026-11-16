@@ -239,8 +239,16 @@ pub fn install(
 }
 
 pub fn uninstall(path: &str, family: &str) -> Result<TrashEntry, String> {
+    let entry = uninstall_quiet(path, family)?;
+    refresh_system_font_cache();
+    Ok(entry)
+}
+
+/// Same as `uninstall` but without broadcasting WM_FONTCHANGE, so batch
+/// callers can broadcast once at the end instead of once per file.
+pub fn uninstall_quiet(path: &str, family: &str) -> Result<TrashEntry, String> {
     #[cfg(target_os = "windows")]
-    unregister_user_font(path);
+    unregister_user_font_quiet(path);
 
     let trash = crate::store::trash_dir();
     fs::create_dir_all(&trash).map_err(|e| e.to_string())?;
@@ -265,8 +273,11 @@ pub fn uninstall(path: &str, family: &str) -> Result<TrashEntry, String> {
         dest.extension().and_then(|e| e.to_str()).unwrap_or("bin")
     ));
     let _ = fs::write(&meta, serde_json::to_vec(&entry).unwrap_or_default());
-    refresh_system_font_cache();
     Ok(entry)
+}
+
+pub fn broadcast_font_change() {
+    refresh_system_font_cache();
 }
 
 pub fn list_trash() -> Vec<TrashEntry> {
@@ -306,19 +317,35 @@ pub fn restore(entry_id: &str) -> Result<RestoreOutcome, String> {
     Ok(RestoreOutcome::Moved)
 }
 
-pub fn empty_trash() -> Result<(), String> {
+pub fn empty_trash(mut progress: impl FnMut(usize, usize)) -> Result<(), String> {
     let trash = crate::store::trash_dir();
     if !trash.exists() {
         return Ok(());
     }
+    let entries: Vec<TrashEntry> = list_trash()
+        .into_iter()
+        .filter(|e| e.original_path != e.trashed_path)
+        .collect();
+    let total = entries.len();
+    progress(0, total);
     let mut errors = Vec::new();
-    for entry in list_trash() {
-        if entry.original_path == entry.trashed_path {
-            continue;
+    let mut done = 0usize;
+    // One shell operation per chunk instead of one per file: the per-file
+    // recycle-bin call is what made this slow.
+    for chunk in entries.chunks(40) {
+        let paths: Vec<&Path> = chunk.iter().map(|e| Path::new(&e.trashed_path)).collect();
+        if let Err(batch_err) = trash::delete_all(&paths) {
+            for e in chunk {
+                let p = Path::new(&e.trashed_path);
+                if p.exists() {
+                    if let Err(e2) = recycle(p) {
+                        errors.push(format!("{e2} ({batch_err})"));
+                    }
+                }
+            }
         }
-        if let Err(e) = recycle(Path::new(&entry.trashed_path)) {
-            errors.push(e);
-        }
+        done += chunk.len();
+        progress(done, total);
     }
     if !errors.is_empty() {
         return Err(errors.join("; "));
@@ -453,10 +480,15 @@ mod tests {
 
 #[cfg(target_os = "windows")]
 pub(crate) fn unregister_user_font(path: &str) {
+    unregister_user_font_quiet(path);
+    refresh_system_font_cache();
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn unregister_user_font_quiet(path: &str) {
     use crate::registry;
     registry::remove_font_resource(path);
     for name in registry::user_entries_for(path) {
         let _ = registry::delete_user_entry(&name);
     }
-    refresh_system_font_cache();
 }

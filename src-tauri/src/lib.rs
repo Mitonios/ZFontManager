@@ -157,6 +157,71 @@ fn uninstall_font(store: State<Store>, path: String, family: String) -> Result<T
     installer::uninstall(&path, &family)
 }
 
+#[derive(serde::Deserialize)]
+struct UninstallItem {
+    path: String,
+    family: String,
+}
+
+#[derive(serde::Serialize)]
+struct UninstallOutcome {
+    path: String,
+    entry: Option<TrashEntry>,
+    error: Option<String>,
+}
+
+#[derive(serde::Serialize, Clone)]
+struct BulkProgress {
+    op: &'static str,
+    done: usize,
+    total: usize,
+}
+
+#[tauri::command]
+async fn uninstall_fonts(
+    app: tauri::AppHandle,
+    items: Vec<UninstallItem>,
+) -> Result<Vec<UninstallOutcome>, String> {
+    use tauri::{Emitter, Manager};
+    let total = items.len();
+    let _ = app.emit("bulk:progress", BulkProgress { op: "uninstall", done: 0, total });
+    tauri::async_runtime::spawn_blocking(move || {
+        let store = app.state::<Store>();
+        let mut out = Vec::with_capacity(items.len());
+        for (i, item) in items.into_iter().enumerate() {
+            let res = (|| -> Result<TrashEntry, String> {
+                {
+                    let mut state = store.0.lock().map_err(|e| e.to_string())?;
+                    if state.deactivated.contains(&item.path) {
+                        activation::sync(&mut state, &item.path, true)?;
+                    }
+                    if state.linked.contains(&item.path) {
+                        activation::drop_linked_alias(&state, &item.path);
+                        let entry = installer::unlink(&item.path, &item.family)?;
+                        state.linked.remove(&item.path);
+                        return Ok(entry);
+                    }
+                    activation::release(&state, &item.path);
+                }
+                installer::uninstall_quiet(&item.path, &item.family)
+            })();
+            let (entry, error) = match res {
+                Ok(e) => (Some(e), None),
+                Err(e) => (None, Some(e)),
+            };
+            out.push(UninstallOutcome { path: item.path, entry, error });
+            let _ = app.emit("bulk:progress", BulkProgress { op: "uninstall", done: i + 1, total });
+        }
+        if let Ok(state) = store.0.lock() {
+            let _ = store::save(&state);
+        }
+        installer::broadcast_font_change();
+        out
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn list_trash() -> Vec<TrashEntry> {
     installer::list_trash()
@@ -318,8 +383,15 @@ fn delete_trash_entry(entry_id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn empty_trash() -> Result<(), String> {
-    installer::empty_trash()
+async fn empty_trash(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Emitter;
+    tauri::async_runtime::spawn_blocking(move || {
+        installer::empty_trash(|done, total| {
+            let _ = app.emit("bulk:progress", BulkProgress { op: "empty-trash", done, total });
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -1013,6 +1085,7 @@ pub fn run() {
             set_fonts_active_session,
             install_fonts,
             uninstall_font,
+            uninstall_fonts,
             list_trash,
             affinity_connection,
             affinity_link,

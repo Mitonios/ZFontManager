@@ -6,6 +6,7 @@ import { DetailPanel } from "./components/DetailPanel";
 import { ResizeGrips } from "./components/ResizeGrips";
 import { Titlebar } from "./components/Titlebar";
 import { DropZone } from "./components/DropZone";
+import { BulkProgress } from "./components/BulkProgress";
 import { FontGrid } from "./components/FontGrid";
 import { CardView } from "./components/CardView";
 import { FontList } from "./components/FontList";
@@ -362,6 +363,7 @@ export default function App() {
         </div>
       </div>
       <DropZone />
+      <BulkProgress />
       <SelectionBar />
       <CompareOverlay />
       <SettingsOverlay />

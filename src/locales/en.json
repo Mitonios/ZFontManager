@@ -541,6 +541,8 @@
   "toast.couldntDelete": "Couldn't delete font",
   "toast.trashEmptied": "Trash emptied",
   "toast.couldntEmptyTrash": "Couldn't empty trash",
+  "bulk.uninstalling": "Moving fonts to trash…",
+  "bulk.emptying": "Emptying trash…",
   "toast.couldntSaveTags": "Couldn't save tags",
   "toast.charSearchFailed": "Couldn’t search by character",
   "toast.collectionExists": "Collection already exists",

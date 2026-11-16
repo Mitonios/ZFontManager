@@ -218,6 +218,11 @@ export const ipc = {
     invoke<InstallResult>("install_fonts", { paths, existing, mode }),
   uninstallFont: (path: string, family: string) =>
     invoke<TrashEntry>("uninstall_font", { path, family }),
+  uninstallFonts: (items: { path: string; family: string }[]) =>
+    invoke<{ path: string; entry: TrashEntry | null; error: string | null }[]>(
+      "uninstall_fonts",
+      { items },
+    ),
   listTrash: () => invoke<TrashEntry[]>("list_trash"),
   restoreFromTrash: (entryId: string) => invoke<void>("restore_from_trash", { entryId }),
   deleteTrashEntry: (entryId: string) => invoke<void>("delete_trash_entry", { entryId }),
