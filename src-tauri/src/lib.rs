@@ -142,7 +142,8 @@ fn uninstall_font(store: State<Store>, path: String, family: String) -> Result<T
     {
         let mut state = store.0.lock().map_err(|e| e.to_string())?;
         if state.deactivated.contains(&path) {
-            activation::sync(&mut state, &path, true)?;
+            let _ = activation::sync(&mut state, &path, true);
+            state.deactivated.remove(&path);
             store::save(&state)?;
         }
         if state.linked.contains(&path) {
@@ -193,7 +194,10 @@ async fn uninstall_fonts(
                 {
                     let mut state = store.0.lock().map_err(|e| e.to_string())?;
                     if state.deactivated.contains(&item.path) {
-                        activation::sync(&mut state, &item.path, true)?;
+                        // A broken font can't be re-enabled; that must not
+                        // block removing it from the library.
+                        let _ = activation::sync(&mut state, &item.path, true);
+                        state.deactivated.remove(&item.path);
                     }
                     if state.linked.contains(&item.path) {
                         activation::drop_linked_alias(&state, &item.path);
